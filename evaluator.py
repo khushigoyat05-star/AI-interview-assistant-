@@ -1,0 +1,178 @@
+import json
+from groq import Groq
+from config import GROQ_API_KEY, GPT_MODEL
+
+# Groq client
+client = Groq(api_key=GROQ_API_KEY)
+
+
+def evaluate_answer(question: dict, answer_text: str, candidate_info: dict) -> dict:
+    """
+    Ek answer evaluate karo
+    Returns: evaluation dict with score and feedback
+    """
+    
+    if not answer_text or len(answer_text.strip()) < 10:
+        return {
+            "score": 0,
+            "rating": "No Answer",
+            "strengths": [],
+            "improvements": ["Candidate does not give any answer"],
+            "keywords_matched": [],
+            "keywords_missed": question.get("expected_keywords", []),
+            "detailed_feedback": "Candidate did not provide an answer."
+        }
+    
+    question_text = question.get("question", "")
+    category = question.get("category", "Technical")
+    skill_tested = question.get("skill_tested", "")
+    difficulty = question.get("difficulty", "Medium")
+    expected_keywords = question.get("expected_keywords", [])
+    experience = candidate_info.get("total_experience", "fresher")
+    
+    prompt = f"""
+Evaluate the following interview answer.
+
+Question: "{question_text}"
+Category: {category}
+Skill Being Tested: {skill_tested}
+Difficulty: {difficulty}
+Candidate Experience: {experience}
+Expected Keywords: {', '.join(expected_keywords)}
+
+Candidate Answer:
+"{answer_text}"
+
+Evaluate the answer and return ONLY valid JSON in English.
+
+{{
+    "score": <integer between 0 and 10>,
+    "rating": "<Excellent/Good/Average/Poor/No Answer>",
+    "strengths": ["strength1", "strength2"],
+    "improvements": ["improvement1", "improvement2"],
+    "keywords_matched": ["keyword1"],
+    "keywords_missed": ["keyword2"],
+    "detailed_feedback": "Provide detailed feedback in 2-3 sentences, strictly in English.",
+    "communication_score": <integer between 0 and 10>,
+    "technical_accuracy": <integer between 0 and 10>,
+    "confidence_level": "<High/Medium/Low>"
+}}
+"""
+    
+    response = client.chat.completions.create(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a fair and expert technical interviewer. Evaluate answers objectively. Return only valid JSON. All feedback, strengths, weaknesses, ratings, recommendations, and summaries must be in English."
+            },
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.3
+    )
+    
+    result_text = response.choices[0].message.content.strip()
+    
+    if "```" in result_text:
+        parts = result_text.split("```")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("{") or part.startswith("json"):
+                result_text = part.replace("json", "", 1).strip()
+                break
+    
+    evaluation = json.loads(result_text)
+    print(f"[Evaluator] Q scored: {evaluation.get('score')}/10 - {evaluation.get('rating')}")
+    return evaluation
+
+
+def generate_final_report_data(candidate_info: dict, qa_pairs: list) -> dict:
+    """
+    Generate the final analysis of interview 
+    qa_pairs = [{"question": {...}, "answer": "...", "evaluation": {...}}, ...]
+    """
+    
+    # Scores calculate karo
+    scores = [qa["evaluation"].get("score", 0) for qa in qa_pairs if qa.get("evaluation")]
+    avg_score = sum(scores) / len(scores) if scores else 0
+    
+    # Strengths aur weaknesses compile karo
+    all_strengths = []
+    all_improvements = []
+    for qa in qa_pairs:
+        eval_data = qa.get("evaluation", {})
+        all_strengths.extend(eval_data.get("strengths", []))
+        all_improvements.extend(eval_data.get("improvements", []))
+    
+    # Category-wise performance
+    category_scores = {}
+    for qa in qa_pairs:
+        cat = qa["question"].get("category", "General")
+        score = qa["evaluation"].get("score", 0)
+        if cat not in category_scores:
+            category_scores[cat] = []
+        category_scores[cat].append(score)
+    
+    category_avg = {
+        cat: round(sum(scores_list) / len(scores_list), 1)
+        for cat, scores_list in category_scores.items()
+    }
+    
+    # Overall recommendation Groq se
+    prompt = f"""
+    final interview assesment:
+    - Candidate: {candidate_info.get('name', 'Candidate')}
+    - Experience: {candidate_info.get('total_experience', 'N/A')}
+    - Role: {candidate_info.get('current_role', 'N/A')}
+    - Average Score: {avg_score:.1f}/10
+    - Category Performance: {json.dumps(category_avg)}
+    - Top Strengths: {all_strengths[:5]}
+    - Areas to Improve: {all_improvements[:5]}
+    
+    ONLY valid JSON return karo:
+    {{
+        "overall_verdict": "<Highly Recommended/Recommended/Consider/Not Recommended>",
+        "verdict_reason": "2-3 line explanation",
+        "top_strengths": ["strength1", "strength2", "strength3"],
+        "key_improvements": ["improvement1", "improvement2", "improvement3"],
+        "hiring_recommendation": "detailed 3-4 sentence recommendation",
+        "suggested_role_level": "<Junior/Mid/Senior/Lead>",
+        "interview_performance_summary": "overall performance ka brief summary"
+    }}
+    """
+    
+    response = client.chat.completions.create(
+        model=GPT_MODEL,
+        messages=[
+            {"role": "system", "content": "Tum HR expert ho. Sirf valid JSON return karo."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.4
+    )
+    
+    result_text = response.choices[0].message.content.strip()
+    
+    if "```" in result_text:
+        parts = result_text.split("```")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("{") or part.startswith("json"):
+                result_text = part.replace("json", "", 1).strip()
+                break
+    
+    final_analysis = json.loads(result_text)
+    
+    # Sab combine karo
+    report_data = {
+        "candidate_info": candidate_info,
+        "qa_pairs": qa_pairs,
+        "summary": {
+            "average_score": round(avg_score, 1),
+            "total_questions": len(qa_pairs),
+            "category_performance": category_avg,
+            "scores_list": scores
+        },
+        "final_analysis": final_analysis
+    }
+    
+    return report_data

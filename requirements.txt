@@ -1,0 +1,11 @@
+PyQt5>=5.15.0
+PyMuPDF>=1.23.0
+openai>=1.0.0
+opencv-python>=4.8.0
+reportlab>=4.0.0
+pyaudio>=0.2.13
+wave
+Pillow>=10.0.0
+numpy>=1.24.0
+groq
+
